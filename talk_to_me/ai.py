@@ -79,6 +79,27 @@ class TalkToMeAI:
             }],
         )
 
+    async def transcribe_file(self, path: Path) -> str:
+        """Upload a private VK voice file to Kie, then transcribe its public temporary URL."""
+        def _upload() -> str:
+            headers = {"Authorization": self.headers["Authorization"]}
+            with path.open("rb") as audio:
+                response = requests.post(
+                    "https://kieai.redpandaai.co/api/file-stream-upload",
+                    headers=headers,
+                    files={"file": ("voice.ogg", audio, "audio/ogg")},
+                    data={"uploadPath": "talk-to-me/voice", "fileName": f"voice-{time.time_ns()}.ogg"},
+                    timeout=60,
+                )
+            response.raise_for_status()
+            url = response.json().get("data", {}).get("downloadUrl")
+            if not url:
+                raise RuntimeError(f"Kie file upload returned no URL: {response.text[:300]}")
+            return url
+
+        uploaded_url = await asyncio.to_thread(_upload)
+        return await self.transcribe_url(uploaded_url)
+
     async def synthesize(self, text: str, path: Path, mode: str) -> None:
         voice = "Rachel" if mode == "female" else "Adam"
 

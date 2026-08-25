@@ -7,6 +7,7 @@ import random
 import tempfile
 from pathlib import Path
 
+import requests
 import vk_api
 from vk_api.bot_longpoll import VkBotEventType, VkBotLongPoll
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
@@ -263,7 +264,12 @@ async def handle(message: dict) -> None:
             send(peer_id, "🧪 Распознавание голоса через ИИ доступно только владельцу проекта.", MAIN_KEYBOARD)
             return
         try:
-            text = await ai.transcribe_url(url)
+            with tempfile.TemporaryDirectory(prefix="talk_to_me_voice_") as folder:
+                path = Path(folder) / "answer.ogg"
+                response = await asyncio.to_thread(requests.get, url, timeout=30)
+                response.raise_for_status()
+                path.write_bytes(response.content)
+                text = await ai.transcribe_file(path)
             send(peer_id, f"🎙 Я услышал: {text}", MAIN_KEYBOARD)
         except Exception:
             LOG.exception("VK voice transcription failed")
