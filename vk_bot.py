@@ -167,6 +167,8 @@ async def deliver(peer_id: int, p: Profile, text: str) -> None:
             await ai.synthesize(text, path, p.mode)
             result = await asyncio.to_thread(upload.audio_message, str(path), peer_id=peer_id)
             doc = result[0] if isinstance(result, list) else result
+            if isinstance(doc, dict):
+                doc = doc.get("audio_message") or doc.get("doc") or doc
             send(peer_id, "🔊 Голосовой ответ", MAIN_KEYBOARD, attachment_id(doc))
             p.voice_reply_count += 1
             if p.voice_reply_count >= 3:
@@ -282,6 +284,10 @@ async def handle(message: dict) -> None:
         else:
             left = 3 - p.voice_reply_count
             send(peer_id, f"Голосовой режим включён. Осталось голосовых ответов: {left}.", MAIN_KEYBOARD)
+            if p.current_question:
+                await deliver(peer_id, p, p.current_question)
+            else:
+                send(peer_id, "Сначала выберите тему — после этого я задам вопрос голосом.", TOPIC_KEYBOARD)
         return
     if current == "topic":
         send(peer_id, "Выберите тему кнопкой:", TOPIC_KEYBOARD)
