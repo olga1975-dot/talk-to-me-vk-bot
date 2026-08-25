@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import imageio_ffmpeg
+import edge_tts
 import requests
 
 from .config import Settings
@@ -121,56 +122,9 @@ class TalkToMeAI:
         return await self.transcribe_url(uploaded_url)
 
     async def synthesize(self, text: str, path: Path, mode: str) -> None:
-        voice = "Rachel" if mode == "female" else "Adam"
-
-        def _call() -> None:
-            created = requests.post(
-                f"{self.base_url}/api/v1/jobs/createTask",
-                headers=self.headers,
-                json={
-                    "model": "elevenlabs/text-to-speech-multilingual-v2",
-                    "input": {
-                        "text": text,
-                        "voice": voice,
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                        "style": 0,
-                        "speed": 0.95,
-                        "timestamps": False,
-                    },
-                },
-                timeout=30,
-            )
-            created.raise_for_status()
-            task_id = created.json().get("data", {}).get("taskId")
-            if not task_id:
-                raise RuntimeError(f"Kie TTS task was not created: {created.text[:300]}")
-            deadline = time.monotonic() + 90
-            while time.monotonic() < deadline:
-                status = requests.get(
-                    f"{self.base_url}/api/v1/jobs/recordInfo",
-                    headers=self.headers,
-                    params={"taskId": task_id},
-                    timeout=30,
-                )
-                status.raise_for_status()
-                data = status.json().get("data") or {}
-                if data.get("state") == "success":
-                    result = data.get("resultJson") or "{}"
-                    result = json.loads(result) if isinstance(result, str) else result
-                    urls = result.get("resultUrls") or result.get("result_urls") or []
-                    if not urls:
-                        raise RuntimeError("Kie TTS completed without an audio URL")
-                    audio = requests.get(urls[0], timeout=30)
-                    audio.raise_for_status()
-                    path.write_bytes(audio.content)
-                    return
-                if data.get("state") == "fail":
-                    raise RuntimeError(f"Kie TTS failed: {data}")
-                time.sleep(2)
-            raise TimeoutError("Kie TTS timed out")
-
-        await asyncio.to_thread(_call)
+        voice = "en-US-JennyNeural" if mode == "female" else "en-US-GuyNeural"
+        communicator = edge_tts.Communicate(text=text, voice=voice, rate="-5%")
+        await communicator.save(str(path))
 
 
 def extract_question(text: str) -> str:
