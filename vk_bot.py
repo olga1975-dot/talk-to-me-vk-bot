@@ -178,9 +178,16 @@ async def deliver(peer_id: int, p: Profile, text: str) -> None:
                     "💡 Это был третий пробный голосовой ответ. Дальше бот продолжит текстом.",
                     MAIN_KEYBOARD,
                 )
-    except Exception:
+    except Exception as exc:
         LOG.exception("VK voice upload failed")
-        send(peer_id, "Не удалось создать голос — текстовый ответ уже отправлен.", MAIN_KEYBOARD)
+        detail = ""
+        if p.user_id == settings.authorized_vk_id:
+            detail = f"\n\n🔧 Диагностика голоса: {type(exc).__name__}: {str(exc)[:500]}"
+        send(
+            peer_id,
+            "Не удалось создать голос — текстовый ответ уже отправлен." + detail,
+            MAIN_KEYBOARD,
+        )
 
 
 def voice_url(attachments: list[dict]) -> str | None:
