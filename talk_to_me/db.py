@@ -16,6 +16,9 @@ class Profile:
     mode: str = "text"
     current_question: str = ""
     bad_answer_count: int = 0
+    voice_reply_count: int = 0
+    voice_input_count: int = 0
+    ai_reply_count: int = 0
 
     @property
     def complete(self) -> bool:
@@ -47,6 +50,19 @@ class Database:
                     content TEXT NOT NULL, created_at TEXT NOT NULL
                 );
             """)
+            columns = {row[1] for row in con.execute("PRAGMA table_info(profiles)")}
+            if "voice_reply_count" not in columns:
+                con.execute(
+                    "ALTER TABLE profiles ADD COLUMN voice_reply_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "voice_input_count" not in columns:
+                con.execute(
+                    "ALTER TABLE profiles ADD COLUMN voice_input_count INTEGER NOT NULL DEFAULT 0"
+                )
+            if "ai_reply_count" not in columns:
+                con.execute(
+                    "ALTER TABLE profiles ADD COLUMN ai_reply_count INTEGER NOT NULL DEFAULT 0"
+                )
 
     def get_profile(self, user_id: int) -> Profile:
         with self._connect() as con:
@@ -89,4 +105,3 @@ class Database:
     def clear_history(self, user_id: int) -> None:
         with self._connect() as con:
             con.execute("DELETE FROM messages WHERE user_id=?", (user_id,))
-

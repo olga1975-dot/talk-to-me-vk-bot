@@ -25,7 +25,7 @@ LEVELS = ["Beginner (A0–A1)", "Elementary (A1–A2)", "Intermediate (A2–B1)"
 TOPICS = ["Animals", "Games", "Sports", "Music", "Films", "Everyday life", "Surprise me"]
 LEVEL_BUTTONS = ["🌱 Beginner", "🌿 Elementary", "🌳 Intermediate"]
 TOPIC_BUTTONS = ["🐾 Animals", "🎮 Games", "⚽ Sports", "🎵 Music", "🎬 Films", "🏠 Everyday life", "🎲 Surprise me"]
-MODE_BUTTONS = ["💬 Text", "👩 Female voice", "👨 Male voice"]
+MODE_BUTTONS = ["💬 Text only"]
 HELP = "💡 Help"
 
 settings = load_settings()
@@ -90,15 +90,12 @@ async def choose_topic(peer_id: int, p: Profile, index: int) -> None:
     db.clear_history(p.user_id)
     db.save_profile(p)
     send(peer_id, f"Topic: {p.topic}")
-    if p.user_id != settings.authorized_vk_id:
-        answer = f"Great choice! Let’s talk about {p.topic}. What do you like most about it?"
-        p.current_question = extract_question(answer)
-        db.save_profile(p)
-        db.add_message(p.user_id, "assistant", answer)
-        send(peer_id, answer + "\n\n🧪 Demo mode: AI is enabled only for the project owner.", MAIN_KEYBOARD)
+    if p.ai_reply_count >= 5:
+        send(peer_id, "✅ Пробная версия завершена: использовано 5 ответов ИИ.", MAIN_KEYBOARD)
         return
     try:
         answer = await ai.first_question(p)
+        p.ai_reply_count += 1
         p.current_question = extract_question(answer)
         db.save_profile(p)
         db.add_message(p.user_id, "assistant", answer)
@@ -112,15 +109,11 @@ async def help_user(peer_id: int, p: Profile) -> None:
     if not p.complete or not p.current_question:
         send(peer_id, "Сначала завершите регистрацию и выберите тему. Напишите «Начать».", MAIN_KEYBOARD)
         return
-    if p.user_id != settings.authorized_vk_id:
-        send(peer_id, "💡 1. I like it because it is fun.\n2. My favorite thing is …\n3. I think it is interesting.", MAIN_KEYBOARD)
-        return
-    try:
-        examples = await ai.help(p)
-        send(peer_id, "💡 Примеры-подсказки. Напишите свой ответ или измените один из примеров:\n\n" + examples, MAIN_KEYBOARD)
-    except Exception:
-        LOG.exception("AI help failed")
-        send(peer_id, "Начните ответ так: “I think … because …”", MAIN_KEYBOARD)
+    send(
+        peer_id,
+        "💡 Примеры-подсказки:\n\n1. I like it because it is fun.\n2. My favorite thing is …\n3. I think it is interesting because …",
+        MAIN_KEYBOARD,
+    )
 
 
 async def process_answer(peer_id: int, p: Profile, text: str) -> None:
@@ -130,17 +123,20 @@ async def process_answer(peer_id: int, p: Profile, text: str) -> None:
         db.save_profile(p)
         send(peer_id, retry_message(check.reason, p.current_question, p.age or 5), MAIN_KEYBOARD)
         return
-    if p.user_id != settings.authorized_vk_id:
-        send(peer_id, "✅ Ответ принят.\n\n🧪 Демо-режим: продолжение через Kie.ai доступно владельцу проекта.", MAIN_KEYBOARD)
+    if p.ai_reply_count >= 5:
+        send(peer_id, "✅ Спасибо! Пробная версия завершена: использовано 5 ответов ИИ.", MAIN_KEYBOARD)
         return
     try:
         history = db.history(p.user_id, settings.history_limit)
         answer = await ai.reply(p, history, text)
+        p.ai_reply_count += 1
         db.add_message(p.user_id, "user", text)
         db.add_message(p.user_id, "assistant", answer)
         p.current_question = extract_question(answer)
         p.bad_answer_count = 0
         db.save_profile(p)
+        if p.ai_reply_count >= 5:
+            answer += "\n\n✅ Это был пятый ответ ИИ. Пробная версия завершена."
         await deliver(peer_id, p, answer)
     except Exception:
         LOG.exception("AI reply failed")
@@ -154,18 +150,6 @@ def attachment_id(doc: dict) -> str:
 
 async def deliver(peer_id: int, p: Profile, text: str) -> None:
     send(peer_id, text, MAIN_KEYBOARD)
-    if p.mode == "text":
-        return
-    try:
-        with tempfile.TemporaryDirectory(prefix="talk_to_me_tts_") as folder:
-            path = Path(folder) / "reply.mp3"
-            await ai.synthesize(text, path, p.mode)
-            result = await asyncio.to_thread(upload.audio_message, str(path), peer_id=peer_id)
-            doc = result[0] if isinstance(result, list) else result
-            send(peer_id, "🔊 Голос сгенерирован ИИ", MAIN_KEYBOARD, attachment_id(doc))
-    except Exception:
-        LOG.exception("VK voice upload failed")
-        send(peer_id, "Не удалось создать голос — текстовый ответ уже отправлен.", MAIN_KEYBOARD)
 
 
 def voice_url(attachments: list[dict]) -> str | None:
@@ -249,10 +233,9 @@ async def handle(message: dict) -> None:
         await choose_topic(peer_id, p, TOPIC_BUTTONS.index(text))
         return
     if text in MODE_BUTTONS:
-        p.mode = ["text", "female", "male"][MODE_BUTTONS.index(text)]
+        p.mode = "text"
         db.save_profile(p)
-        note = "" if p.mode == "text" else " Голос синтезируется ИИ."
-        send(peer_id, f"Режим изменён: {text}.{note}", MAIN_KEYBOARD)
+        send(peer_id, "Экономный режим: бот отвечает текстом. Вы можете отправить до 3 голосовых сообщений.", MAIN_KEYBOARD)
         return
     if current == "topic":
         send(peer_id, "Выберите тему кнопкой:", TOPIC_KEYBOARD)
@@ -260,8 +243,8 @@ async def handle(message: dict) -> None:
 
     url = voice_url(message.get("attachments", []))
     if url:
-        if user_id != settings.authorized_vk_id:
-            send(peer_id, "🧪 Распознавание голоса через ИИ доступно только владельцу проекта.", MAIN_KEYBOARD)
+        if p.voice_input_count >= 3:
+            send(peer_id, "🎙 Лимит из 3 голосовых использован. Продолжайте отвечать текстом.", MAIN_KEYBOARD)
             return
         try:
             with tempfile.TemporaryDirectory(prefix="talk_to_me_voice_") as folder:
@@ -270,10 +253,20 @@ async def handle(message: dict) -> None:
                 response.raise_for_status()
                 path.write_bytes(response.content)
                 text = await ai.transcribe_file(path)
+            p.voice_input_count += 1
+            db.save_profile(p)
             send(peer_id, f"🎙 Я услышал: {text}", MAIN_KEYBOARD)
-        except Exception:
+        except Exception as exc:
             LOG.exception("VK voice transcription failed")
-            send(peer_id, "Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом.", MAIN_KEYBOARD)
+            detail = ""
+            if user_id == settings.authorized_vk_id:
+                detail = f"\n\n🔧 Диагностика: {type(exc).__name__}: {str(exc)[:500]}"
+            send(
+                peer_id,
+                "Не удалось распознать голосовое сообщение. Попробуйте ещё раз или напишите текстом."
+                + detail,
+                MAIN_KEYBOARD,
+            )
             return
     if not text:
         send(peer_id, "Отправьте текст или голосовое сообщение.", MAIN_KEYBOARD)
