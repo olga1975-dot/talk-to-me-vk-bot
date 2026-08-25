@@ -25,7 +25,7 @@ LEVELS = ["Beginner (A0–A1)", "Elementary (A1–A2)", "Intermediate (A2–B1)"
 TOPICS = ["Animals", "Games", "Sports", "Music", "Films", "Everyday life", "Surprise me"]
 LEVEL_BUTTONS = ["🌱 Beginner", "🌿 Elementary", "🌳 Intermediate"]
 TOPIC_BUTTONS = ["🐾 Animals", "🎮 Games", "⚽ Sports", "🎵 Music", "🎬 Films", "🏠 Everyday life", "🎲 Surprise me"]
-MODE_BUTTONS = ["💬 Text only"]
+MODE_BUTTONS = ["💬 Text", "👩 Female voice", "👨 Male voice"]
 HELP = "💡 Help"
 
 settings = load_settings()
@@ -150,6 +150,37 @@ def attachment_id(doc: dict) -> str:
 
 async def deliver(peer_id: int, p: Profile, text: str) -> None:
     send(peer_id, text, MAIN_KEYBOARD)
+    if p.mode == "text":
+        return
+    if p.voice_reply_count >= 3:
+        p.mode = "text"
+        db.save_profile(p)
+        send(
+            peer_id,
+            "🔊 Три пробных голосовых ответа использованы. Продолжаем в текстовом режиме.",
+            MAIN_KEYBOARD,
+        )
+        return
+    try:
+        with tempfile.TemporaryDirectory(prefix="talk_to_me_tts_") as folder:
+            path = Path(folder) / "reply.mp3"
+            await ai.synthesize(text, path, p.mode)
+            result = await asyncio.to_thread(upload.audio_message, str(path), peer_id=peer_id)
+            doc = result[0] if isinstance(result, list) else result
+            send(peer_id, "🔊 Голосовой ответ", MAIN_KEYBOARD, attachment_id(doc))
+            p.voice_reply_count += 1
+            if p.voice_reply_count >= 3:
+                p.mode = "text"
+            db.save_profile(p)
+            if p.voice_reply_count >= 3:
+                send(
+                    peer_id,
+                    "💡 Это был третий пробный голосовой ответ. Дальше бот продолжит текстом.",
+                    MAIN_KEYBOARD,
+                )
+    except Exception:
+        LOG.exception("VK voice upload failed")
+        send(peer_id, "Не удалось создать голос — текстовый ответ уже отправлен.", MAIN_KEYBOARD)
 
 
 def voice_url(attachments: list[dict]) -> str | None:
@@ -233,9 +264,17 @@ async def handle(message: dict) -> None:
         await choose_topic(peer_id, p, TOPIC_BUTTONS.index(text))
         return
     if text in MODE_BUTTONS:
-        p.mode = "text"
+        p.mode = ["text", "female", "male"][MODE_BUTTONS.index(text)]
         db.save_profile(p)
-        send(peer_id, "Экономный режим: бот отвечает текстом. Вы можете отправить до 3 голосовых сообщений.", MAIN_KEYBOARD)
+        if p.mode == "text":
+            send(peer_id, "Режим изменён: бот отвечает текстом.", MAIN_KEYBOARD)
+        elif p.voice_reply_count >= 3:
+            p.mode = "text"
+            db.save_profile(p)
+            send(peer_id, "Три пробных голосовых ответа уже использованы. Доступен текстовый режим.", MAIN_KEYBOARD)
+        else:
+            left = 3 - p.voice_reply_count
+            send(peer_id, f"Голосовой режим включён. Осталось голосовых ответов: {left}.", MAIN_KEYBOARD)
         return
     if current == "topic":
         send(peer_id, "Выберите тему кнопкой:", TOPIC_KEYBOARD)
