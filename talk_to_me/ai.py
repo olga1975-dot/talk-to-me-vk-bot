@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 
+import imageio_ffmpeg
 import requests
 
 from .config import Settings
@@ -80,15 +82,33 @@ class TalkToMeAI:
         )
 
     async def transcribe_file(self, path: Path) -> str:
-        """Upload a private VK voice file to Kie, then transcribe its public temporary URL."""
+        """Convert VK OGG/Opus to WAV, upload it to Kie, then transcribe it."""
         def _upload() -> str:
+            wav_path = path.with_suffix(".wav")
+            conversion = subprocess.run(
+                [
+                    imageio_ffmpeg.get_ffmpeg_exe(),
+                    "-y",
+                    "-i", str(path),
+                    "-ac", "1",
+                    "-ar", "16000",
+                    "-c:a", "pcm_s16le",
+                    str(wav_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if conversion.returncode != 0 or not wav_path.exists():
+                raise RuntimeError(f"Voice conversion failed: {conversion.stderr[-500:]}")
+
             headers = {"Authorization": self.headers["Authorization"]}
-            with path.open("rb") as audio:
+            with wav_path.open("rb") as audio:
                 response = requests.post(
                     "https://kieai.redpandaai.co/api/file-stream-upload",
                     headers=headers,
-                    files={"file": ("voice.ogg", audio, "audio/ogg")},
-                    data={"uploadPath": "talk-to-me/voice", "fileName": f"voice-{time.time_ns()}.ogg"},
+                    files={"file": ("voice.wav", audio, "audio/wav")},
+                    data={"uploadPath": "talk-to-me/voice", "fileName": f"voice-{time.time_ns()}.wav"},
                     timeout=60,
                 )
             response.raise_for_status()
